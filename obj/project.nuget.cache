@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "TcRFOsZSF1Xu1Yu94Lm47SePkepOVx3+0eTtYHDns7AXqqQEjL0qB9jOXp4ZNWmnNio1N7PDZvXKRAO4DyqyLA==",
+  "success": true,
+  "projectFilePath": "G:\\Visual Studio Projects\\UnityProjectDumper\\UnityProjectDumper.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\fboch\\.nuget\\packages\\yamldotnet\\13.7.1\\yamldotnet.13.7.1.nupkg.sha512"
+  ],
+  "logs": []
+}

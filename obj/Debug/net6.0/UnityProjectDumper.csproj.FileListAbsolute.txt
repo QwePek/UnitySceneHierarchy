@@ -1,0 +1,17 @@
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\UnityProjectDumper.exe
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\UnityProjectDumper.deps.json
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\UnityProjectDumper.runtimeconfig.json
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\UnityProjectDumper.dll
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\UnityProjectDumper.pdb
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.GeneratedMSBuildEditorConfig.editorconfig
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.AssemblyInfoInputs.cache
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.AssemblyInfo.cs
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.csproj.CoreCompileInputs.cache
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.dll
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\refint\UnityProjectDumper.dll
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.pdb
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.genruntimeconfig.cache
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\ref\UnityProjectDumper.dll
+G:\Visual Studio Projects\UnityProjectDumper\bin\Debug\net6.0\YamlDotNet.dll
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.csproj.AssemblyReference.cache
+G:\Visual Studio Projects\UnityProjectDumper\obj\Debug\net6.0\UnityProjectDumper.csproj.CopyComplete
