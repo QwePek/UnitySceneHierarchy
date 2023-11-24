@@ -35,7 +35,7 @@ namespace Program
 
             try
             {
-                using (var sr = new StreamReader("G:\\Visual Studio Projects\\UnityProjectDumper\\0.0.3TestScene.unity"))
+                using (var sr = new StreamReader("G:\\Visual Studio Projects\\UnityProjectDumper\\SecondScene.unity"))
                 {
                     var parser = new Parser(sr);
                     parser.Consume<StreamStart>();
@@ -49,7 +49,6 @@ namespace Program
                         if (parser.Accept<MappingStart>(out var anch))
                             anchor = anch.Anchor.Value;
 
-                        Console.WriteLine(parser.Current.ToString());
                         var doc = deserializer.Deserialize(parser);
                         parser.Consume<DocumentEnd>();
 
@@ -76,11 +75,11 @@ namespace Program
             {
                 Console.WriteLine(e.ToString());
             }
-
+            
             foreach (GameObject g in gameObjects)
                 g.parseTransforms(transfroms);
             
-            foreach (Transform g in transfroms)
+            foreach (GameObject g in gameObjects)
                 g.parseGameObjects(gameObjects);
 
             //if (sceneRoots == null)
@@ -111,25 +110,26 @@ namespace Program
             //    Console.WriteLine(g.ToString());
             //}
 
-            List<GameObject> objs2 = new List<GameObject>();
-            foreach(GameObject g in gameObjects)
-            {
-                if (g != null && g.transform != null && g.transform.parentConn == null)
-                {
-                    objs2.Add(g);
-                }
-            }
+            //Print withouth sceneRoots
+            //List<GameObject> objs2 = new List<GameObject>();
+            //foreach(GameObject g in gameObjects)
+            //{
+            //    if (g != null && g.transform != null && g.transform.parentConn == null)
+            //    {
+            //        objs2.Add(g);
+            //    }
+            //}
 
-            foreach (GameObject x in objs2)
-            {
-                x.print();
-            }
+            //foreach (GameObject x in objs2)
+            //{
+            //    x.print();
+            //}
 
-            //Console.WriteLine("\nROOTS:");
-            //Console.Write(sceneRoots.ToString());
+            Console.WriteLine("\nROOTS:");
+            Console.Write(sceneRoots.ToString());
 
-            //Console.WriteLine("\nHIREARCHY:");
-            //sceneRoots.printHierarchyTree(gameObjects);
+            Console.WriteLine("\nHIREARCHY:");
+            sceneRoots.printHierarchyTree(gameObjects);
         }
     }
 }
@@ -179,6 +179,8 @@ public class GameObject : Item
     public string m_TagString { get; set; }
 
     public Transform transform = null;
+    public GameObject parent = null;
+    public List<GameObject> children = new List<GameObject>();
 
     public bool parseTransforms(List<Transform> transformList)
     {
@@ -186,9 +188,11 @@ public class GameObject : Item
         {
             if (t.m_GameObject == null)
                 continue;
+
             if (t.m_GameObject.fileID == anchor)
             {
                 transform = t;
+                transform.gameObjectConn = this;
                 break;
             }
         }
@@ -196,16 +200,71 @@ public class GameObject : Item
         return false;
     }
 
-    public GameObject? findObjIDInside(string ID, int depth)
+    public bool parseGameObjects(List<GameObject> gobjsList)
     {
-        //for (int i = 0; i < depth; i++)
-        //    Console.Write('\t');
-        //Console.WriteLine("GameObj \t\t" + anchor + " \t" + m_Name);
+        if (transform == null)
+            return false;
+
+        //Splitted cause I want to add children in the same order as transform.m_Children
+        //Children parsing
+        if (transform.m_Children != null)
+        {
+            foreach (FileID f in transform.m_Children)
+            {
+                foreach (GameObject g in gobjsList)
+                {
+                    if (g == null)
+                        continue;
+                    if (g.transform == null)
+                        continue;
+
+                    if (g.transform.anchor == f.fileID)
+                    {
+                        children.Add(g);
+                        break;
+                    }
+                }
+            }
+        }
+
+        //Parent parsing
+        foreach (GameObject g in gobjsList)
+        {
+            if (g == null)
+                continue;
+            if (g.transform == null)
+                continue;
+
+            if (transform.m_Father != null && transform.m_Father.fileID == g.transform.anchor)
+            {
+                parent = g;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public GameObject? findObjIDInside(string ID)
+    {
         if (anchor == ID)
             return this;
 
-        if (transform != null)
-            return transform.findObjIDInside(ID, depth);
+        if (transform == null)
+            return null;
+
+        if (transform.anchor == ID)
+            return this;
+
+        foreach (GameObject child in children)
+        {
+            if (child == null)
+                continue;
+
+            GameObject? ret = child.findObjIDInside(ID);
+            if (ret != null)
+                return ret;
+        }
         
         return null;
     }
@@ -214,7 +273,19 @@ public class GameObject : Item
     {
         StringBuilder strBuilder = new StringBuilder();
         strBuilder.AppendLine("GAMEOBJECT: " + m_Name + "\t&" + anchor);
-        strBuilder.AppendLine(transform.ToString());
+        if(parent != null)
+            strBuilder.AppendLine("Parent: " + parent.m_Name + "\t&" + parent.anchor);
+
+        if (children.Count != 0)
+        {
+            strBuilder.AppendLine("Children:");
+            foreach (GameObject child in children)
+            {
+                strBuilder.AppendLine(child.ToString());
+            }
+        }
+        if(transform != null)
+            strBuilder.AppendLine(transform.ToString());
         return strBuilder.ToString();
     }
 
@@ -228,7 +299,7 @@ public class GameObject : Item
             return;
 
         depth++;
-        foreach (GameObject obj in transform.children)
+        foreach (GameObject obj in children)
             obj.print(depth);
     }
 }
@@ -256,83 +327,13 @@ public class Transform : Item
     public FileID m_GameObject { get; set; }
 
     public GameObject gameObjectConn = null;
-    public GameObject parentConn = null;
-
-    public List<GameObject> children = new List<GameObject>();
-
-    public GameObject? findObjIDInside(string ID, int depth)
-    {
-        //for (int i = 0; i < depth; i++)
-            //Console.Write('\t');
-        //Console.WriteLine("Transform: \t\t" + anchor + " \t" + gameObjectConn.m_Name);
-        if (anchor == ID)
-        {
-            //Console.WriteLine("Ret 1");
-            return gameObjectConn;
-        }
-
-        if (parentConn != null)
-        {
-            //for (int i = 0; i < depth; i++)
-                //Console.Write('\t');
-            //Console.WriteLine("Parent Transform: \t" + parentConn.anchor + " \t" + parentConn.m_Name);
-        }
-        if (parentConn != null && parentConn.anchor == ID)
-        {
-            //Console.WriteLine("Ret 2");
-            return parentConn;
-        }
-
-        //GameObject? ret = null;
-        //foreach (GameObject obj in children)
-        //{
-        //    ret = obj.findObjIDInside(ID, depth++);
-        //    if (ret != null)
-        //        break;
-        //}
-
-        //return ret;
-        return null;
-    }
-
-    public bool parseGameObjects(List<GameObject> gobjsList)
-    {
-        foreach (GameObject g in gobjsList)
-        {
-            if (g == null)
-                continue;
-            if (m_Children != null)
-            {
-                foreach (FileID f in m_Children)
-                {
-                    if (g.transform.anchor == f.fileID)
-                    {
-                        children.Add(g);
-                        break;
-                    }
-                }
-            }
-            if (m_GameObject != null && m_GameObject.fileID == g.anchor)
-                gameObjectConn = g;
-
-            if (m_Father != null && m_Father.fileID == g.transform.anchor)
-                parentConn = g;
-        }
-        
-        return false;
-    }
 
     public override string ToString()
     {
         StringBuilder strBuilder = new StringBuilder();
-        strBuilder.AppendLine((gameObjectConn == null ? "null" : gameObjectConn.m_Name));
         strBuilder.AppendLine("Transform:\t&" + anchor);
-        strBuilder.AppendLine("Parent: " + m_Father.fileID + ", " + (parentConn == null ? "null" : parentConn.m_Name));
-        strBuilder.AppendLine("Children: " + children.Count.ToString());
-        foreach (Item it in children)
-        {
-            strBuilder.Append("\t" + it.ToString());
-        }
+        if (gameObjectConn != null)
+            strBuilder.AppendLine("Game object connected: " + gameObjectConn.m_Name);
         return strBuilder.ToString();
     }
 }
@@ -375,7 +376,7 @@ public class SceneRoots : Item
         {
             for (int i = gameObjects.Count - 1; i >= 0; i--)
             {
-                GameObject? g = gameObjects[i].findObjIDInside(x.fileID, 0);
+                GameObject? g = gameObjects[i].findObjIDInside(x.fileID);
                 if (g != null)
                 {
                     objs.Add(g);
