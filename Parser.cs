@@ -1,13 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
+using UnityProjectDumper;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
-using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace Program
 {
@@ -15,8 +11,19 @@ namespace Program
     {
         static void Main(string[] args)
         {
-            //string projectPath = "G:\\Visual Studio Projects\\UnityProjectDumper";
-            string projectPath = "G:\\Unity Projects\\Jumping Knight 3D";
+            if (args.Length < 2)
+            {
+                ShowHelp();
+                return;
+            }
+
+            string projectPath = args[0];
+            string saveFolderPath = args[1];
+            if (!Directory.Exists(projectPath))
+            {
+                Console.WriteLine("Could not find folder with path \'" + projectPath + "\'");
+                return;
+            }
 
             var deserializerBuilder = new DeserializerBuilder()
                 .IgnoreUnmatchedProperties()
@@ -25,28 +32,12 @@ namespace Program
                 .WithTagMapping("tag:unity3d.com,2011:114", typeof(MonoBhv))
                 .WithTagMapping("tag:unity3d.com,2011:1660057539", typeof(SCRoots));
 
-
-            string pathToReferences = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..\\..\\..\\", "UnityClassIDReference.txt");
-            try
+            foreach (var idRef in IDReferences.list)
             {
-                // Otwieramy strumień do odczytu pliku
-                using (StreamReader sr = new StreamReader(pathToReferences))
-                {
-                    // Odczytujemy plik linijka po linijce
-                    string linia;
-                    while ((linia = sr.ReadLine()) != null)
-                    {
-                        string ID = linia.Split('\t').First();
-                        if (ID == "1" || ID == "4" || ID == "114")
-                            continue;
-                        deserializerBuilder.WithTagMapping("tag:unity3d.com,2011:" + ID, typeof(Skip));
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                // W przypadku błędu wyświetlamy komunikat
-                Console.WriteLine("Wystąpił błąd: " + e.Message);
+                int ID = idRef.Item1;
+                if (ID == 1 || ID == 4 || ID == 114)
+                    continue;
+                deserializerBuilder.WithTagMapping("tag:unity3d.com,2011:" + ID, typeof(Skip));
             }
             var deserializer = deserializerBuilder.Build();
 
@@ -56,7 +47,6 @@ namespace Program
             SceneRoots? sceneRoots = null;
 
             string[] scenesPath = Directory.GetFiles(projectPath + "\\Assets", "*.unity", SearchOption.AllDirectories);
-
             foreach (string filePath in scenesPath)
             {
                 List<GameObject> thisSceneGameObjects = new List<GameObject>();
@@ -75,7 +65,6 @@ namespace Program
 
                         while (!parser.Accept<StreamEnd>(out var _))
                         {
-                            // Consume the stream start event "manually"
                             string anchor = "";
                             parser.Consume<DocumentStart>();
 
@@ -87,30 +76,22 @@ namespace Program
 
                             if (doc is Gobjs gameObject)
                             {
-                                //Console.WriteLine("Dodano GameObject");
                                 gameObject.gobj.anchor = anchor;
                                 thisSceneGameObjects.Add(gameObject.gobj);
-                                allGameObjects.Add(gameObject.gobj);
                             }
                             else if (doc is Trans transform)
                             {
-                                //Console.WriteLine("Dodano Transform");
                                 transform.trans.anchor = anchor;
                                 if (transform.trans != null)
-                                {
                                     thisSceneTransforms.Add(transform.trans);
-                                    allTransfroms.Add(transform.trans);
-                                }
                             }
                             else if (doc is SCRoots roots)
                             {
-                                //Console.WriteLine("Dodano Scene Root");
                                 roots.sceneRoots.anchor = anchor;
                                 sceneRoots = roots.sceneRoots;
                             }
                             else if (doc is MonoBhv mono)
                             {
-                                //Console.WriteLine("Dodano MonoBehaviour");
                                 mono.monoBehaviour.anchor = anchor;
                                 monoBehaviours.Add(mono.monoBehaviour);
                             }
@@ -123,41 +104,88 @@ namespace Program
                     Console.WriteLine("Continuing...");
                 }
 
+                //Parsing Transforms with GameObjects
                 foreach (GameObject g in thisSceneGameObjects)
                     g.parseTransforms(thisSceneTransforms);
 
                 foreach (GameObject g in thisSceneGameObjects)
                     g.parseGameObjects(thisSceneGameObjects);
 
-                //No scene root inside .unity file printing
-                Console.WriteLine(sceneName + " hierarchy:");
-                if (sceneRoots == null)
-                {
-                    List<GameObject> objs2 = new List<GameObject>();
-                    foreach (GameObject g in thisSceneGameObjects)
-                    {
-                        if (g != null && g.transform != null && g.parent == null)
-                        {
-                            objs2.Add(g);
-                        }
-                    }
+                //Create save directory if doesn't exist
+                CreateSavePathDirectory(saveFolderPath);
 
-                    foreach (GameObject x in objs2)
-                    {
-                        x.print();
-                    }
-                }
-                else
-                    sceneRoots.printHierarchyTree(thisSceneGameObjects);
+                //Get valid game objects (which are not containing not valid Transforms)
+                List<GameObject> validGobj = GetValidGameObjects(sceneRoots, thisSceneGameObjects);
 
-                Console.WriteLine("");
+                //Saving scene hierarchies to unity.dump files
+                if (SaveHierarchyToDump(saveFolderPath + "/" + sceneName + ".dump", validGobj))
+                    Console.WriteLine("Successfully saved " + sceneName + " hierarchy to file!");
+
+                allGameObjects.AddRange(thisSceneGameObjects);
+                allTransfroms.AddRange(thisSceneTransforms);
             }
             
-            //Unused scripts finding
+            //Parse all scripts inside project to Script class
+            List<Script> projectScripts = ParseScriptsInsideProject(projectPath);
+
+            //Get unused scripts inside project
+            List<Script> unusedScripts = GetUnusedScripts(projectScripts, monoBehaviours);
+
+            if (SaveScriptsToDump(saveFolderPath + "/UnusedScripts.txt", unusedScripts))
+                Console.WriteLine("Successfully saved unused scripts to file!");
+        }
+
+        static List<GameObject> GetValidGameObjects(SceneRoots? sceneRoots, List<GameObject> sceneGameObjects)
+        {
+            //If SceneRoots is present we print hierarchy via Scene Roots IDs
+            List<GameObject> validGameObjects = new List<GameObject>();
+            if (sceneRoots != null)
+            {
+                foreach (FileID x in sceneRoots.m_Roots)
+                {
+                    foreach (GameObject g in sceneGameObjects)
+                    {
+                        GameObject? gobj = g.findObjIDInside(x.fileID);
+                        if (gobj != null)
+                        {
+                            validGameObjects.Add(gobj);
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                foreach (GameObject g in sceneGameObjects)
+                    if (g != null && g.m_IsActive == 1 && g.transform != null && g.parent == null)
+                        validGameObjects.Add(g);
+            }
+
+            return validGameObjects;
+        }
+
+        static bool SaveHierarchyToDump(string savePath, List<GameObject> validGameObjects)
+        {
+            try
+            {
+                using StreamWriter writer = new StreamWriter(savePath);
+                foreach (GameObject x in validGameObjects)
+                    x.writeToFile(writer);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return false;
+            }
+
+            return true;
+        }
+
+        static List<Script> ParseScriptsInsideProject(string projectPath)
+        {
             //Finding every script inside project
             string[] scriptPaths = Directory.GetFiles(projectPath + "\\Assets", "*.cs.meta", SearchOption.AllDirectories);
-            List<Script> allProjectScripts = new List<Script>();
-
+            List<Script> projectScripts = new List<Script>();
             foreach (string str in scriptPaths)
             {
                 var scriptDeserializer = new DeserializerBuilder().IgnoreUnmatchedProperties().Build();
@@ -172,12 +200,11 @@ namespace Program
                         {
                             // Consume the stream start event "manually"
                             var script = scriptDeserializer.Deserialize<Script>(parser);
-                            
                             if (script != null)
                             {
                                 string relativePath = str.Remove(0, projectPath.Length + 1); //+1 because of '\' sign
                                 script.path = relativePath.Remove(relativePath.Length - 5, 5); //Deleting .meta
-                                allProjectScripts.Add(script);
+                                projectScripts.Add(script);
                             }
                         }
                     }
@@ -189,9 +216,14 @@ namespace Program
                 }
             }
 
-            //Comparing every script inside project to used scripts
-            List<Script> unusedScripts = new List<Script>();
-            foreach (Script sc in allProjectScripts)
+            return projectScripts;
+        }
+
+        static List<Script> GetUnusedScripts(List<Script> allScripts, List<MonoBehaviour> monoBehaviours)
+        {
+            //Compare all project scripts with MonoBehaviours inside scenes
+            List<Script> unused = new List<Script>();
+            foreach (Script sc in allScripts)
             {
                 bool found = false;
                 foreach (MonoBehaviour bhv in monoBehaviours)
@@ -203,12 +235,45 @@ namespace Program
                     }
                 }
                 if (!found)
-                    unusedScripts.Add(sc);
+                    unused.Add(sc);
             }
 
-            Console.WriteLine("Unused Scripts: ");
-            foreach (Script sc in unusedScripts)
-                Console.WriteLine(sc.path + ", " + sc.guid);
+            return unused;
+        }
+
+        static bool SaveScriptsToDump(string savePath, List<Script> scripts)
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(savePath))
+                    foreach (Script sc in scripts)
+                        writer.WriteLine(sc.path + ", " + sc.guid);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return false;
+            }
+
+            return true;
+        }
+
+        static void ShowHelp()
+        {
+            Console.WriteLine("Usage: ./tool.exe unity_project_path output_folder_path");
+            Console.WriteLine("");
+            Console.WriteLine("Description:");
+            Console.WriteLine("  This tool processes a Unity project located at the specified 'unity_project_path', reads");
+            Console.WriteLine("  all hierarchies inside every .scene file, and finds unused scripts inside the");
+            Console.WriteLine("  project. All of that is saved inside folder specified with 'output_folder_path'.");
+        }
+
+        static void CreateSavePathDirectory(string path)
+        {
+            if (Directory.Exists(path))
+                return;
+            
+            Directory.CreateDirectory(path);
         }
     }
 }
@@ -309,6 +374,9 @@ public class GameObject : Item
     [YamlMember(Alias = "m_TagString", ApplyNamingConventions = false)]
     public string m_TagString { get; set; }
 
+    [YamlMember(Alias = "m_IsActive", ApplyNamingConventions = false)]
+    public short m_IsActive { get; set; }
+
     public Transform transform = null;
     public GameObject parent = null;
     public List<GameObject> children = new List<GameObject>();
@@ -330,7 +398,6 @@ public class GameObject : Item
 
         return false;
     }
-
     public bool parseGameObjects(List<GameObject> gobjsList)
     {
         if (transform == null)
@@ -375,7 +442,6 @@ public class GameObject : Item
 
         return false;
     }
-
     public GameObject? findObjIDInside(string ID)
     {
         if (anchor == ID)
@@ -399,7 +465,6 @@ public class GameObject : Item
         
         return null;
     }
-
     public override string ToString()
     {
         StringBuilder strBuilder = new StringBuilder();
@@ -419,19 +484,19 @@ public class GameObject : Item
             strBuilder.AppendLine(transform.ToString());
         return strBuilder.ToString();
     }
-
-    public void print(int depth = 0)
+    public void writeToFile(StreamWriter writer, int depth = 0)
     {
         for (int i = 0; i < depth; i++)
-            Console.Write("--");
-        Console.WriteLine(m_Name);
+            writer.Write("--");
+
+        writer.WriteLine(m_Name);
 
         if (transform == null)
             return;
 
         depth++;
         foreach (GameObject obj in children)
-            obj.print(depth);
+            obj.writeToFile(writer, depth);
     }
 }
 
@@ -498,30 +563,6 @@ public class SceneRoots : Item
             i++;
         }
         return strBuilder.ToString();
-    }
-
-    public bool printHierarchyTree(List<GameObject> gameObjects)
-    {
-        List<GameObject> objs = new List<GameObject>();
-        foreach (FileID x in m_Roots)
-        {
-            for (int i = gameObjects.Count - 1; i >= 0; i--)
-            {
-                GameObject? g = gameObjects[i].findObjIDInside(x.fileID);
-                if (g != null)
-                {
-                    objs.Add(g);
-                    break;
-                }
-            }
-        }
-
-        foreach (GameObject x in objs)
-        {
-            x.print();
-        }
-        
-        return true;
     }
 }
 
