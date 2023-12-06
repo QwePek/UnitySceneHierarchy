@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Collections.Concurrent;
+using System.Text;
 using System.Text.RegularExpressions;
 using UnityProjectDumper;
 using YamlDotNet.Core;
@@ -9,7 +10,7 @@ namespace Program
 {
     public class UnityParser
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             if (args.Length < 2)
             {
@@ -34,102 +35,127 @@ namespace Program
 
             foreach (var idRef in IDReferences.list)
             {
-                int ID = idRef.Item1;
-                if (ID == 1 || ID == 4 || ID == 114)
+                string ID = idRef.Item1;
+                if (ID == "1" || ID == "4" || ID == "114" || ID == "1660057539")
                     continue;
                 deserializerBuilder.WithTagMapping("tag:unity3d.com,2011:" + ID, typeof(Skip));
             }
             var deserializer = deserializerBuilder.Build();
 
-            List<GameObject> allGameObjects = new List<GameObject>();
-            List<Transform> allTransfroms = new List<Transform>();
-            List<MonoBehaviour> monoBehaviours = new List<MonoBehaviour>();
-            SceneRoots? sceneRoots = null;
+            BlockingCollection<GameObject> allGameObjects = new BlockingCollection<GameObject>();
+            BlockingCollection<Transform> allTransfroms = new BlockingCollection<Transform>();
+            BlockingCollection<MonoBehaviour> monoBehaviours = new BlockingCollection<MonoBehaviour>();
 
             string[] scenesPath = Directory.GetFiles(projectPath + "\\Assets", "*.unity", SearchOption.AllDirectories);
+            List<Task> tasks = new List<Task>();
+            object deserializationLock = new object();
+
             foreach (string filePath in scenesPath)
             {
-                List<GameObject> thisSceneGameObjects = new List<GameObject>();
-                List<Transform> thisSceneTransforms = new List<Transform>();
-                string sceneName = filePath.Split('\\').Last();
-
-                try
+                tasks.Add(Task.Run(() =>
                 {
-                    string wholeFile = File.ReadAllText(filePath/*projectPath + "\\SecondScene.unity"*/);
-                    wholeFile = Regex.Replace(wholeFile, "([0-9]+ &[0-9]+) stripped\n", "$1\n"); //Deleting 'stripped' tag from unity
-                                                                                                 //scene files (it allows me to open not only files attached in this exercise)
-                    using (var sr = new StringReader(wholeFile))
+                    List<GameObject> thisSceneGameObjects = new List<GameObject>();
+                    List<Transform> thisSceneTransforms = new List<Transform>();
+                    SceneRoots? sceneRoots = null;
+                    string sceneName = filePath.Split('\\').Last();
+
+                    try
                     {
-                        var parser = new Parser(sr);
-                        parser.Consume<StreamStart>();
-
-                        while (!parser.Accept<StreamEnd>(out var _))
+                        string wholeFile = File.ReadAllText(filePath);
+                        wholeFile = Regex.Replace(wholeFile, "([0-9]+ &[0-9]+) stripped\n", "$1\n"); //Deleting 'stripped' tag from unity
+                                                                                                     //scene files (it allows me to open not only files attached in this exercise)
+                        using (var sr = new StringReader(wholeFile))
                         {
-                            string anchor = "";
-                            parser.Consume<DocumentStart>();
+                            var parser = new Parser(sr);
+                            parser.Consume<StreamStart>();
 
-                            if (parser.Accept<MappingStart>(out var anch))
-                                anchor = anch.Anchor.Value;
+                            while (!parser.Accept<StreamEnd>(out var _))
+                            {
+                                string anchor = "";
+                                parser.Consume<DocumentStart>();
 
-                            var doc = deserializer.Deserialize(parser);
-                            parser.Consume<DocumentEnd>();
+                                if (parser.Accept<MappingStart>(out var anch))
+                                    anchor = anch.Anchor.Value;
 
-                            if (doc is Gobjs gameObject)
-                            {
-                                gameObject.gobj.anchor = anchor;
-                                thisSceneGameObjects.Add(gameObject.gobj);
-                            }
-                            else if (doc is Trans transform)
-                            {
-                                transform.trans.anchor = anchor;
-                                if (transform.trans != null)
-                                    thisSceneTransforms.Add(transform.trans);
-                            }
-                            else if (doc is SCRoots roots)
-                            {
-                                roots.sceneRoots.anchor = anchor;
-                                sceneRoots = roots.sceneRoots;
-                            }
-                            else if (doc is MonoBhv mono)
-                            {
-                                mono.monoBehaviour.anchor = anchor;
-                                monoBehaviours.Add(mono.monoBehaviour);
+                                object? doc = null;
+                                lock (deserializationLock)
+                                {
+                                    doc = deserializer.Deserialize(parser);
+                                }
+                                parser.Consume<DocumentEnd>();
+
+                                if (doc is Gobjs gameObject)
+                                {
+                                    gameObject.gobj.anchor = anchor;
+                                    thisSceneGameObjects.Add(gameObject.gobj);
+                                }
+                                else if (doc is Trans transform)
+                                {
+                                    transform.trans.anchor = anchor;
+                                    if (transform.trans != null)
+                                        thisSceneTransforms.Add(transform.trans);
+                                }
+                                else if (doc is SCRoots roots)
+                                {
+                                    roots.sceneRoots.anchor = anchor;
+                                    sceneRoots = roots.sceneRoots;
+                                }
+                                else if (doc is MonoBhv mono)
+                                {
+                                    mono.monoBehaviour.anchor = anchor;
+                                    monoBehaviours.Add(mono.monoBehaviour);
+                                }
                             }
                         }
                     }
-                }
-                catch (IOException e)
-                {
-                    Console.WriteLine(e.ToString());
-                    Console.WriteLine("Continuing...");
-                }
+                    catch (IOException e)
+                    {
+                        Console.WriteLine(e.ToString());
+                        Console.WriteLine("Continuing...");
+                    }
 
-                //Parsing Transforms with GameObjects
-                foreach (GameObject g in thisSceneGameObjects)
-                    g.parseTransforms(thisSceneTransforms);
+                    //Parsing Transforms with GameObjects
+                    foreach (GameObject g in thisSceneGameObjects)
+                        g.parseTransforms(thisSceneTransforms);
 
-                foreach (GameObject g in thisSceneGameObjects)
-                    g.parseGameObjects(thisSceneGameObjects);
+                    foreach (GameObject g in thisSceneGameObjects)
+                        g.parseGameObjects(thisSceneGameObjects);
 
-                //Create save directory if doesn't exist
-                CreateSavePathDirectory(saveFolderPath);
+                    //Create save directory if doesn't exist
+                    CreateSavePathDirectory(saveFolderPath);
 
-                //Get valid game objects (which are not containing not valid Transforms)
-                List<GameObject> validGobj = GetValidGameObjects(sceneRoots, thisSceneGameObjects);
+                    //Get valid game objects (which are not containing not valid Transforms)
+                    List<GameObject> validGobj = GetValidGameObjects(sceneRoots, thisSceneGameObjects);
 
-                //Saving scene hierarchies to unity.dump files
-                if (SaveHierarchyToDump(saveFolderPath + "/" + sceneName + ".dump", validGobj))
-                    Console.WriteLine("Successfully saved " + sceneName + " hierarchy to file!");
+                    //Saving scene hierarchies to unity.dump files
+                    if (SaveHierarchyToDump(saveFolderPath + "/" + sceneName + ".dump", validGobj))
+                        Console.WriteLine("Successfully saved " + sceneName + " hierarchy to file!");
 
-                allGameObjects.AddRange(thisSceneGameObjects);
-                allTransfroms.AddRange(thisSceneTransforms);
+                    foreach (var go in thisSceneGameObjects)
+                        allGameObjects.Add(go);
+
+                    foreach (var tr in thisSceneTransforms)
+                        allTransfroms.Add(tr);
+                }));
             }
+
+            Task t = Task.WhenAll(tasks);
+            try
+            {
+                t.Wait();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("StackTrace: " + e.ToString());
+            }
+
+            List<MonoBehaviour> mono = new List<MonoBehaviour>(monoBehaviours);
             
             //Parse all scripts inside project to Script class
             List<Script> projectScripts = ParseScriptsInsideProject(projectPath);
 
             //Get unused scripts inside project
-            List<Script> unusedScripts = GetUnusedScripts(projectScripts, monoBehaviours);
+            List<Script> unusedScripts = GetUnusedScripts(projectScripts, mono);
 
             if (SaveScriptsToDump(saveFolderPath + "/UnusedScripts.txt", unusedScripts))
                 Console.WriteLine("Successfully saved unused scripts to file!");
@@ -171,6 +197,8 @@ namespace Program
                 using StreamWriter writer = new StreamWriter(savePath);
                 foreach (GameObject x in validGameObjects)
                     x.writeToFile(writer);
+
+                writer.Close();
             }
             catch (Exception ex)
             {
